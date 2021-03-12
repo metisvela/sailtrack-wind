@@ -5,6 +5,8 @@
 //Ultrasonic anemometer with HC-SR04 and similar sensors, based on trigger/echo
 //time measurements based on clock cycle counter. Overhead ignored as calculation
 
+#include <Arduino.h>
+
 //smoothin variables
 const int numReadings = 20;
 long readings1[numReadings];      // reading buffer
