@@ -1,2 +1,2 @@
 # SailTrack Wind
-Repository containing the code of the wind node of the SailTrack system.
+Repository containing the code of the wind module of the SailTrack system.
