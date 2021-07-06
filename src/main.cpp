@@ -1,147 +1,156 @@
-//SailTrack Wind, part of SailTrack project
-//rev. A 30-01-2021
-//https://github.com/metis-vela-unipd
-//Mètis Vela UNIPD - Stefano Pieretti
-//Ultrasonic anemometer with HC-SR04 and similar sensors, based on trigger/echo
-//time measurements based on clock cycle counter. Overhead ignored as calculation
-
 #include <Arduino.h>
 
-//smoothin variables
-const int numReadings = 20;
-long readings1[numReadings]; // reading buffer
-int readIndex = 0;			 // index of the current reading
-long total1 = 0;			 // running total
-long average1 = 0;			 // average
-long readings2[numReadings]; // reading buffer
-long total2 = 0;			 // running total
-long average2 = 0;			 // average
+#include <freertos/queue.h>
 
-//CPU clock in MHz
+#define ECHO1 12
+#define ECHO2 27
+#define ECHO3 25
+
+#define TRIGGER1 14
+#define TRIGGER2 26
+#define TRIGGER3 33
+
+#define DEBUG 15
+
+#define LENGTH .475 //[m]
+
+#define SENSOR_N 2
+#define FILTER_N 100
+
+#define SPD(m1, m2) .5 * LENGTH * 1e6 * (FILTER_N / m1 - FILTER_N / m2)
+
+
+void measureTask(void *parameter);
+static void ICACHE_RAM_ATTR changeISR();
+
+double m_carr1[FILTER_N] = {0};
+double m_carr2[FILTER_N] = {0};
+
+int i = 0;
+
 int cpu_freq = 0;
 
-//pin mapping
-int sensor1Trigger = 2;
-int sensor2Trigger = 3;
-int sensor1Echo = 4;
-int sensor2Echo = 16;
-int currentEchoPin; //current pin to read from isr
-
-//isr variable
+// ISR variables
 volatile unsigned long cpuTimeRising = 0;
-volatile unsigned long cpuTimeFalling = 0;
+volatile unsigned long elapsedCpuTime = 0;
 volatile unsigned long cpuTimePlaceholder = 0;
+volatile unsigned long ToF = 0;
+volatile bool evalFlag = false;
 
-//other variables
-unsigned long elapsedCpuTime = 0;
-float velocity = 0;
-
-void IRAM_ATTR isrCHANGE();
-long ToF(int trigger1, int trigger2, int echo1);
+QueueHandle_t raw_measure_queue, measure_queue;
 
 void setup()
 {
+    // Enable serial communication
+    Serial.begin(115200);
 
-	//set input and output
-	pinMode(sensor1Trigger, OUTPUT);
-	pinMode(sensor2Trigger, OUTPUT);
-	pinMode(sensor1Echo, INPUT);
-	pinMode(sensor2Echo, INPUT);
+    // Get cpu frequency
+    cpu_freq = ESP.getCpuFreqMHz();
+    Serial.println(cpu_freq);
 
-	//enable serial communication
-	Serial.begin(250000);
+    // Setp PINs and interrupts
+    pinMode(TRIGGER1, OUTPUT);
+    pinMode(TRIGGER2, OUTPUT);
+    pinMode(TRIGGER3, OUTPUT);
+    pinMode(ECHO1, INPUT);
+    pinMode(ECHO2, INPUT);
+    pinMode(ECHO3, INPUT);
 
-	//get cpu frequency
-	cpu_freq = ESP.getCpuFreqMHz();
+    pinMode(DEBUG, OUTPUT);
 
-	// initialize all the readings to 0:
-	for (int thisReading = 0; thisReading < numReadings; thisReading++)
-	{
-		readings1[thisReading] = 0;
-	}
-	for (int thisReading = 0; thisReading < numReadings; thisReading++)
-	{
-		readings2[thisReading] = 0;
-	}
+    // Create queues
+    raw_measure_queue = xQueueCreate(1, sizeof(unsigned long));
+    measure_queue = xQueueCreate(1, sizeof(double[3][3]));
+
+    // Create tasks
+    xTaskCreate(measureTask, "measureTask", 10000, NULL, 1, NULL);
 }
 
 void loop()
 {
-	//read ToF and smooth the values
-	// subtract the last reading:
-	total1 = total1 - readings1[readIndex];
-	total2 = total2 - readings2[readIndex];
-	// read from the sensor:
-	readings1[readIndex] = (ToF(sensor1Trigger, sensor2Trigger, sensor1Echo));
-	readings2[readIndex] = (ToF(sensor1Trigger, sensor2Trigger, sensor2Echo));
-	// add the reading to the total:
-	total1 = total1 + readings1[readIndex];
-	total2 = total2 + readings2[readIndex];
-	// advance to the next position in the array:
-	readIndex = readIndex + 1;
+    double measure[SENSOR_N][SENSOR_N];
+    if (xQueueReceive(measure_queue, &measure, portMAX_DELAY) == pdPASS)
+    {
 
-	// if we're at the end of the array...
-	if (readIndex >= numReadings)
-	{
-		// ...wrap around to the beginning:
-		readIndex = 0;
-	}
+        m_carr1[i] = measure[0][1];
+        m_carr2[i] = measure[1][0];
 
-	// calculate the average:
-	average1 = total1 / numReadings;
-	average2 = total2 / numReadings;
+        double s1 = 0, s2 = 0;
 
-	velocity = (0.15 * 1e12 * ((1.0 / average1) - (1.0 / average2)));
+        for (size_t j = 0; j < FILTER_N; j++)
+        {
+            s1 += m_carr1[j];
+            s2 += m_carr2[j];
+        }
+        Serial.printf("Measure : %e \n", .5 * LENGTH * 1e6 * (10. / s1 - 10. / s2));
 
-	// send it to the computer as ASCII digits
-
-	Serial.println(velocity, 5);
+        i = (i + 1) % FILTER_N;
+    }
 }
 
-void IRAM_ATTR isrCHANGE()
+void measureTask(void *parameter)
 {
-	//gets cpu timing when echo pin changes logic state
+    TickType_t xLastWakeTime;
+    const TickType_t xFrequency = 10 / portTICK_RATE_MS;
 
-	cpuTimePlaceholder = ESP.getCycleCount(); //get cpu time before evaluating if statement
+    xLastWakeTime = xTaskGetTickCount();
 
-	//assign cpu time to the right variable for high and low cases
-	if (digitalRead(currentEchoPin) == 1)
-	{
-		cpuTimeRising = cpuTimePlaceholder;
-	}
-	else
-	{
-		cpuTimeFalling = cpuTimePlaceholder;
-	}
+    unsigned long raw_elapsedCpuTime = 0;
+    double measure[SENSOR_N][SENSOR_N];
+
+    // unsigned int echo[]  = {ECHO1, ECHO2, ECHO3, ECHO2, ECHO1, ECHO3};
+    // unsigned int trig1[] = {TRIGGER1, TRIGGER1, TRIGGER2, TRIGGER2, TRIGGER3, TRIGGER3};
+    // unsigned int trig2[] = {TRIGGER2, TRIGGER2, TRIGGER3, TRIGGER3, TRIGGER1, TRIGGER1};
+
+    unsigned int echo[] = {ECHO1, ECHO2};
+    unsigned int trig1[] = {TRIGGER1, TRIGGER1};
+    unsigned int trig2[] = {TRIGGER2, TRIGGER2};
+
+    // unsigned int i[] = {0, 1, 1, 2, 2, 0};
+    // unsigned int j[] = {1, 0, 2, 1, 0, 2};
+
+    unsigned int i[] = {0, 1};
+    unsigned int j[] = {1, 0};
+
+    unsigned int idx = 0;
+
+    for (;;)
+    {
+        vTaskDelayUntil(&xLastWakeTime, xFrequency);
+
+        attachInterrupt(digitalPinToInterrupt(echo[idx]), changeISR, CHANGE);
+
+        digitalWrite(trig1[idx], HIGH);
+        digitalWrite(trig2[idx], HIGH);
+        delayMicroseconds(20);
+        digitalWrite(trig1[idx], LOW);
+        digitalWrite(trig2[idx], LOW);
+        // Serial.printf("Pulse %i \n", idx);
+
+        if (xQueueReceive(raw_measure_queue, &raw_elapsedCpuTime, portMAX_DELAY) == pdPASS)
+        {
+            cpuTimeRising = raw_elapsedCpuTime;
+        }
+        if (xQueueReceive(raw_measure_queue, &raw_elapsedCpuTime, portMAX_DELAY) == pdPASS)
+        {
+            elapsedCpuTime = (raw_elapsedCpuTime - cpuTimeRising);
+            detachInterrupt(digitalPinToInterrupt(echo[idx]));
+            // Serial.printf("%d, %e \n", idx, (double) elapsedCpuTime/ (1000 * cpu_freq));
+            measure[i[idx]][j[idx]] = elapsedCpuTime / cpu_freq; // [us]
+        }
+
+        if (idx == 1)
+            xQueueSendToFront(measure_queue, (void *)&measure, 100 / portTICK_RATE_MS);
+
+        idx = (idx + 1) % 2;
+        taskYIELD();
+    }
 }
 
-long ToF(int trigger1, int trigger2, int echo1)
+static void ICACHE_RAM_ATTR changeISR()
 {
-	//function: measure time of fligh from one sensor (label "1") to another (label "2")
-	// units: nanoseconds (1e-9s)
-
-	//enable interrupts for ToF calculation on echo1 pin and set current echo pin
-	currentEchoPin = echo1;
-	attachInterrupt(echo1, isrCHANGE, CHANGE);
-
-	//trigger both sensors
-	digitalWrite(trigger1, LOW); //reset trigger logic level before start
-	digitalWrite(trigger2, LOW);
-	delayMicroseconds(5);
-	digitalWrite(trigger1, HIGH); //send a 10uS trigger HIGH pulse
-	digitalWrite(trigger2, HIGH);
-	delayMicroseconds(10);
-	digitalWrite(trigger1, LOW);
-	digitalWrite(trigger2, LOW);
-
-	//wait while ISRs collect timing data, adjust delay to at least double of expected ToF
-	delay(20);
-
-	//disable interrupts
-	detachInterrupt(echo1);
-
-	//do some math
-	elapsedCpuTime = (cpuTimeFalling - cpuTimeRising) * (1000.0 / cpu_freq); //elapsed time in ns
-
-	return elapsedCpuTime;
+    //gets cpu timing when echo pin changes logic state
+    cpuTimePlaceholder = ESP.getCycleCount(); //get cpu time before evaluating if statement
+    // digitalWrite(DEBUG, !digitalRead(DEBUG));
+    xQueueSendToBackFromISR(raw_measure_queue, (void *)&cpuTimePlaceholder, pdFALSE);
 }
