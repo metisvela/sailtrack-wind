@@ -89,15 +89,15 @@ void setup()
 
 void loop()
 {
-    double measure[SENSOR_N][SENSOR_N];
+    double measure[SENSOR_N*2];
     if (xQueueReceive(measure_queue, &measure, portMAX_DELAY) == pdPASS)
     {
-        m_carr1[i] = measure[0][1];
-        m_carr2[i] = measure[1][0];
-        m_carr3[i] = measure[1][2];
-        m_carr4[i] = measure[2][1];
-        m_carr5[i] = measure[2][0];
-        m_carr6[i] = measure[0][2];     
+        m_carr1[i] = measure[0];
+        m_carr2[i] = measure[1];
+        m_carr3[i] = measure[2];
+        m_carr4[i] = measure[3];
+        m_carr5[i] = measure[4];
+        m_carr6[i] = measure[5];     
 
         double s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0;
 
@@ -110,9 +110,9 @@ void loop()
             s5 += m_carr5[j];
             s6 += m_carr6[j];
         }
-        Serial.printf("Measure A: %e \t", .5 * LENGTH * 1e6 * (10. / s1 - 10. / s2));
-        Serial.printf("Measure B: %e \t", .5 * LENGTH * 1e6 * (10. / s3 - 10. / s4));
-        Serial.printf("Measure C: %e \n", .5 * LENGTH * 1e6 * (10. / s5 - 10. / s6));
+        Serial.printf("Measure A: %e \t", .5 * LENGTH * 1e6 * (SENSOR_N / s1 - SENSOR_N / s2));
+        Serial.printf("Measure B: %e \t", .5 * LENGTH * 1e6 * (SENSOR_N / s3 - SENSOR_N / s4));
+        Serial.printf("Measure C: %e \n", .5 * LENGTH * 1e6 * (SENSOR_N / s6 - SENSOR_N / s5));
 
         // const char* test = "Test";
         // esp_mqtt_client_publish(client, "test/topic", test, sizeof(test), 0, 0);
@@ -129,7 +129,7 @@ void measureTask(void *parameter)
     xLastWakeTime = xTaskGetTickCount();
 
     unsigned long raw_elapsedCpuTime = 0;
-    double measure[SENSOR_N][SENSOR_N];
+    double measure[SENSOR_N*2];
 
     unsigned int echo[]  = {ECHO1, ECHO2, ECHO3, ECHO2, ECHO1, ECHO3};
     unsigned int trig1[] = {TRIGGER1, TRIGGER1, TRIGGER2, TRIGGER2, TRIGGER3, TRIGGER3};
@@ -138,12 +138,6 @@ void measureTask(void *parameter)
     // unsigned int echo[] = {ECHO1};
     // unsigned int trig1[] = {TRIGGER1};
     // unsigned int trig2[] = {TRIGGER2};
-
-    unsigned int i[] = {0, 1, 1, 2, 2, 0};
-    unsigned int j[] = {1, 0, 2, 1, 0, 2};
-
-    // unsigned int i[] = {0, 1};
-    // unsigned int j[] = {1, 0};
 
     unsigned int idx = 0;
 
@@ -169,7 +163,7 @@ void measureTask(void *parameter)
             elapsedCpuTime = (raw_elapsedCpuTime - cpuTimeRising);
             detachInterrupt(digitalPinToInterrupt(echo[idx]));
             // Serial.printf("%d, %e \n", idx, (double) elapsedCpuTime/ (1000 * cpu_freq));
-            measure[i[idx]][j[idx]] = elapsedCpuTime / cpu_freq; // [us]
+            measure[idx] = elapsedCpuTime / cpu_freq; // [us]
         }
 
         if (idx == SENSOR_N*2 - 1)
