@@ -1,4 +1,7 @@
 #include <Arduino.h>
+#include <mqtt_config.h>
+#include <mqtt_client.h>
+#include <mqtt_supported_features.h>
 
 #include <freertos/queue.h>
 
@@ -14,7 +17,7 @@
 
 #define LENGTH .475 //[m]
 
-#define SENSOR_N 2
+#define SENSOR_N 3
 #define FILTER_N 100
 
 #define SPD(m1, m2) .5 * LENGTH * 1e6 * (FILTER_N / m1 - FILTER_N / m2)
@@ -25,6 +28,11 @@ static void ICACHE_RAM_ATTR changeISR();
 
 double m_carr1[FILTER_N] = {0};
 double m_carr2[FILTER_N] = {0};
+double m_carr3[FILTER_N] = {0};
+double m_carr4[FILTER_N] = {0};
+double m_carr5[FILTER_N] = {0};
+double m_carr6[FILTER_N] = {0};
+
 
 int i = 0;
 
@@ -38,6 +46,8 @@ volatile unsigned long ToF = 0;
 volatile bool evalFlag = false;
 
 QueueHandle_t raw_measure_queue, measure_queue;
+
+esp_mqtt_client_handle_t client;
 
 void setup()
 {
@@ -58,6 +68,17 @@ void setup()
 
     pinMode(DEBUG, OUTPUT);
 
+    // const esp_mqtt_client_config_t mqtt_cfg = {
+        // .uri = "mqtt://mqtt.eclipseprojects.io",
+        // .host = "sailtrack.local",
+        // .port = 1883,
+        // .username = "sailtrack",
+        // .password = "sailtrack",
+    // };
+    // client = esp_mqtt_client_init(&mqtt_cfg);
+    // esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, client);
+    // esp_mqtt_client_start(client);
+
     // Create queues
     raw_measure_queue = xQueueCreate(1, sizeof(unsigned long));
     measure_queue = xQueueCreate(1, sizeof(double[3][3]));
@@ -71,18 +92,30 @@ void loop()
     double measure[SENSOR_N][SENSOR_N];
     if (xQueueReceive(measure_queue, &measure, portMAX_DELAY) == pdPASS)
     {
-
         m_carr1[i] = measure[0][1];
         m_carr2[i] = measure[1][0];
+        m_carr3[i] = measure[1][2];
+        m_carr4[i] = measure[2][1];
+        m_carr5[i] = measure[2][0];
+        m_carr6[i] = measure[0][2];     
 
-        double s1 = 0, s2 = 0;
+        double s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0;
 
         for (size_t j = 0; j < FILTER_N; j++)
         {
             s1 += m_carr1[j];
             s2 += m_carr2[j];
+            s3 += m_carr3[j];
+            s4 += m_carr4[j];
+            s5 += m_carr5[j];
+            s6 += m_carr6[j];
         }
-        Serial.printf("Measure : %e \n", .5 * LENGTH * 1e6 * (10. / s1 - 10. / s2));
+        Serial.printf("Measure A: %e \t", .5 * LENGTH * 1e6 * (10. / s1 - 10. / s2));
+        Serial.printf("Measure B: %e \t", .5 * LENGTH * 1e6 * (10. / s3 - 10. / s4));
+        Serial.printf("Measure C: %e \n", .5 * LENGTH * 1e6 * (10. / s5 - 10. / s6));
+
+        // const char* test = "Test";
+        // esp_mqtt_client_publish(client, "test/topic", test, sizeof(test), 0, 0);
 
         i = (i + 1) % FILTER_N;
     }
@@ -98,19 +131,19 @@ void measureTask(void *parameter)
     unsigned long raw_elapsedCpuTime = 0;
     double measure[SENSOR_N][SENSOR_N];
 
-    // unsigned int echo[]  = {ECHO1, ECHO2, ECHO3, ECHO2, ECHO1, ECHO3};
-    // unsigned int trig1[] = {TRIGGER1, TRIGGER1, TRIGGER2, TRIGGER2, TRIGGER3, TRIGGER3};
-    // unsigned int trig2[] = {TRIGGER2, TRIGGER2, TRIGGER3, TRIGGER3, TRIGGER1, TRIGGER1};
+    unsigned int echo[]  = {ECHO1, ECHO2, ECHO3, ECHO2, ECHO1, ECHO3};
+    unsigned int trig1[] = {TRIGGER1, TRIGGER1, TRIGGER2, TRIGGER2, TRIGGER3, TRIGGER3};
+    unsigned int trig2[] = {TRIGGER2, TRIGGER2, TRIGGER3, TRIGGER3, TRIGGER1, TRIGGER1};
 
-    unsigned int echo[] = {ECHO1, ECHO2};
-    unsigned int trig1[] = {TRIGGER1, TRIGGER1};
-    unsigned int trig2[] = {TRIGGER2, TRIGGER2};
+    // unsigned int echo[] = {ECHO1};
+    // unsigned int trig1[] = {TRIGGER1};
+    // unsigned int trig2[] = {TRIGGER2};
 
-    // unsigned int i[] = {0, 1, 1, 2, 2, 0};
-    // unsigned int j[] = {1, 0, 2, 1, 0, 2};
+    unsigned int i[] = {0, 1, 1, 2, 2, 0};
+    unsigned int j[] = {1, 0, 2, 1, 0, 2};
 
-    unsigned int i[] = {0, 1};
-    unsigned int j[] = {1, 0};
+    // unsigned int i[] = {0, 1};
+    // unsigned int j[] = {1, 0};
 
     unsigned int idx = 0;
 
@@ -139,10 +172,10 @@ void measureTask(void *parameter)
             measure[i[idx]][j[idx]] = elapsedCpuTime / cpu_freq; // [us]
         }
 
-        if (idx == 1)
+        if (idx == SENSOR_N*2 - 1)
             xQueueSendToFront(measure_queue, (void *)&measure, 100 / portTICK_RATE_MS);
 
-        idx = (idx + 1) % 2;
+        idx = (idx + 1) % (SENSOR_N*2);
         taskYIELD();
     }
 }
