@@ -1,9 +1,11 @@
 #include <Arduino.h>
-#include <mqtt_config.h>
-#include <mqtt_client.h>
-#include <mqtt_supported_features.h>
+
+#include <ArduinoJson.h>
 
 #include <freertos/queue.h>
+
+#include <wifi/s_wifi.h>
+#include <mqtt/s_mqtt.h>
 
 #define ECHO1 12
 #define ECHO2 27
@@ -47,12 +49,19 @@ volatile bool evalFlag = false;
 
 QueueHandle_t raw_measure_queue, measure_queue;
 
-esp_mqtt_client_handle_t client;
+esp_mqtt_client_handle_t cl;
+
+
+const int capacity = JSON_OBJECT_SIZE(3);
+StaticJsonDocument<capacity> doc;
 
 void setup()
 {
     // Enable serial communication
     Serial.begin(115200);
+
+    setup_wifi();
+    cl = setup_mqtt();
 
     // Get cpu frequency
     cpu_freq = ESP.getCpuFreqMHz();
@@ -67,17 +76,6 @@ void setup()
     pinMode(ECHO3, INPUT);
 
     pinMode(DEBUG, OUTPUT);
-
-    // const esp_mqtt_client_config_t mqtt_cfg = {
-        // .uri = "mqtt://mqtt.eclipseprojects.io",
-        // .host = "sailtrack.local",
-        // .port = 1883,
-        // .username = "sailtrack",
-        // .password = "sailtrack",
-    // };
-    // client = esp_mqtt_client_init(&mqtt_cfg);
-    // esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, client);
-    // esp_mqtt_client_start(client);
 
     // Create queues
     raw_measure_queue = xQueueCreate(1, sizeof(unsigned long));
@@ -110,12 +108,19 @@ void loop()
             s5 += m_carr5[j];
             s6 += m_carr6[j];
         }
-        Serial.printf("Measure A: %e \t", .5 * LENGTH * 1e6 * (SENSOR_N / s1 - SENSOR_N / s2));
-        Serial.printf("Measure B: %e \t", .5 * LENGTH * 1e6 * (SENSOR_N / s3 - SENSOR_N / s4));
-        Serial.printf("Measure C: %e \n", .5 * LENGTH * 1e6 * (SENSOR_N / s6 - SENSOR_N / s5));
 
-        // const char* test = "Test";
-        // esp_mqtt_client_publish(client, "test/topic", test, sizeof(test), 0, 0);
+        doc["A"] = SPD(s1, s2);
+        doc["B"] = SPD(s3, s4);
+        doc["C"] = SPD(s6, s5);
+
+        // serializeJson(doc, Serial);
+
+        // Serial.printf("{\"Measure A\":%e,\n\"Measure B\":%e,\n\"Measure C:\"%e\n}", SPD(s1, s2), SPD(s3, s4), SPD(s6, s5));
+
+        char payload[200];
+        // sprintf(payload, "{\"Measure A\":%e,\n\"Measure B\":%e,\n\"Measure C:\"%e\n}", SPD(s1, s2), SPD(s3, s4), SPD(s6, s5));
+        serializeJson(doc, payload);
+        esp_mqtt_client_publish(cl, "/topic/Measure A:", payload, 0, 0, 0);       
 
         i = (i + 1) % FILTER_N;
     }
