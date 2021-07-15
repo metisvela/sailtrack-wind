@@ -7,13 +7,13 @@
 #include <wifi/s_wifi.h>
 #include <mqtt/s_mqtt.h>
 
-#define ECHO1 12
-#define ECHO2 27
-#define ECHO3 25
+#define ECHO1 35
+#define ECHO2 33
+#define ECHO3 34
 
-#define TRIGGER1 14
-#define TRIGGER2 26
-#define TRIGGER3 33
+#define TRIGGER1 18
+#define TRIGGER2 19
+#define TRIGGER3 23
 
 #define DEBUG 15
 
