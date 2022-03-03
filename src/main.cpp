@@ -3,9 +3,7 @@
 #include <ArduinoJson.h>
 
 #include <freertos/queue.h>
-
-#include <wifi/s_wifi.h>
-#include <mqtt/s_mqtt.h>
+#include <SailtrackModule.h>
 
 #define ECHO1 35
 #define ECHO2 33
@@ -23,7 +21,7 @@
 #define FILTER_N 100
 
 #define SPD(m1, m2) .5 * LENGTH * 1e6 * (FILTER_N / m1 - FILTER_N / m2)
-
+SailtrackModule STM;
 
 void measureTask(void *parameter);
 static void ICACHE_RAM_ATTR changeISR();
@@ -49,19 +47,13 @@ volatile bool evalFlag = false;
 
 QueueHandle_t raw_measure_queue, measure_queue;
 
-esp_mqtt_client_handle_t cl;
 
 
-const int capacity = JSON_OBJECT_SIZE(3);
-StaticJsonDocument<capacity> doc;
+
 
 void setup()
 {
-    // Enable serial communication
-    Serial.begin(115200);
-
-    setup_wifi();
-    cl = setup_mqtt();
+    STM.begin("wind", IPAddress(192, 168, 42, 104));
 
     // Get cpu frequency
     cpu_freq = ESP.getCpuFreqMHz();
@@ -82,12 +74,13 @@ void setup()
     measure_queue = xQueueCreate(1, sizeof(double[3][3]));
 
     // Create tasks
-    xTaskCreate(measureTask, "measureTask", 10000, NULL, 1, NULL);
+    xTaskCreate(measureTask, "measureTask", TASK_BIG_STACK_SIZE, NULL, TASK_HIGH_PRIORITY, NULL);
 }
 
 void loop()
 {
     double measure[SENSOR_N*2];
+    DynamicJsonDocument payload(500);
     if (xQueueReceive(measure_queue, &measure, portMAX_DELAY) == pdPASS)
     {
         m_carr1[i] = measure[0];
@@ -109,19 +102,11 @@ void loop()
             s6 += m_carr6[j];
         }
 
-        doc["A"] = SPD(s1, s2);
-        doc["B"] = SPD(s3, s4);
-        doc["C"] = SPD(s6, s5);
-
-        // serializeJson(doc, Serial);
-
-        // Serial.printf("{\"Measure A\":%e,\n\"Measure B\":%e,\n\"Measure C:\"%e\n}", SPD(s1, s2), SPD(s3, s4), SPD(s6, s5));
-
-        char payload[200];
-        // sprintf(payload, "{\"Measure A\":%e,\n\"Measure B\":%e,\n\"Measure C:\"%e\n}", SPD(s1, s2), SPD(s3, s4), SPD(s6, s5));
-        serializeJson(doc, payload);
-        esp_mqtt_client_publish(cl, "/topic/Measure A:", payload, 0, 0, 0);       
-
+        payload["A"] = SPD(s1, s2);
+        payload["B"] = SPD(s3, s4);
+        payload["C"] = SPD(s6, s5);
+      
+        STM.publish("sensor/wind0", payload);
         i = (i + 1) % FILTER_N;
     }
 }
@@ -140,10 +125,7 @@ void measureTask(void *parameter)
     unsigned int trig1[] = {TRIGGER1, TRIGGER1, TRIGGER2, TRIGGER2, TRIGGER3, TRIGGER3};
     unsigned int trig2[] = {TRIGGER2, TRIGGER2, TRIGGER3, TRIGGER3, TRIGGER1, TRIGGER1};
 
-    // unsigned int echo[] = {ECHO1};
-    // unsigned int trig1[] = {TRIGGER1};
-    // unsigned int trig2[] = {TRIGGER2};
-
+    
     unsigned int idx = 0;
 
     for (;;)
@@ -157,7 +139,6 @@ void measureTask(void *parameter)
         delayMicroseconds(20);
         digitalWrite(trig1[idx], LOW);
         digitalWrite(trig2[idx], LOW);
-        // Serial.printf("Pulse %i \n", idx);
 
         if (xQueueReceive(raw_measure_queue, &raw_elapsedCpuTime, portMAX_DELAY) == pdPASS)
         {
@@ -167,7 +148,6 @@ void measureTask(void *parameter)
         {
             elapsedCpuTime = (raw_elapsedCpuTime - cpuTimeRising);
             detachInterrupt(digitalPinToInterrupt(echo[idx]));
-            // Serial.printf("%d, %e \n", idx, (double) elapsedCpuTime/ (1000 * cpu_freq));
             measure[idx] = elapsedCpuTime / cpu_freq; // [us]
         }
 
