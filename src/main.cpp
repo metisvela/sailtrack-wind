@@ -113,6 +113,7 @@ void loop()
 
 void measureTask(void *parameter)
 {
+    //fase di setup
     TickType_t xLastWakeTime;
     const TickType_t xFrequency = 10 / portTICK_RATE_MS;
 
@@ -127,7 +128,7 @@ void measureTask(void *parameter)
 
     
     unsigned int idx = 0;
-
+    //loop
     for (;;)
     {
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
