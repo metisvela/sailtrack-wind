@@ -1,2 +1,2 @@
 # SailTrack Wind
-Repository containing the code of the wind module of the SailTrack system.
+Module of the SailTrack system for getting wind data, such as direction and intensity.
