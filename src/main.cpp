@@ -20,8 +20,11 @@
 #define SENSOR_N 3
 #define FILTER_N 100
 
+#define BATTERY_ADC_PIN 35
+#define BATTERY_ADC_MULTIPLIER 1.7
+
 #define SPD(m1, m2) .5 * LENGTH * 1e6 * (FILTER_N / m1 - FILTER_N / m2)
-SailtrackModule STM;
+SailtrackModule stm;
 
 void measureTask(void *parameter);
 static void ICACHE_RAM_ATTR changeISR();
@@ -48,13 +51,22 @@ volatile bool evalFlag = false;
 QueueHandle_t raw_measure_queue, measure_queue;
 
 
-
+class ModuleCallbacks: public SailtrackModuleCallbacks {
+	DynamicJsonDocument * getStatus() {
+		DynamicJsonDocument * payload = new DynamicJsonDocument(300);
+		JsonObject battery = payload->createNestedObject("battery");
+		JsonObject cpu = payload->createNestedObject("cpu");
+		battery["voltage"] = analogRead(BATTERY_ADC_PIN) * BATTERY_ADC_MULTIPLIER / 1000;
+		cpu["temperature"] = temperatureRead();
+		return payload;
+	}
+};
 
 
 void setup()
 {
-    STM.begin("wind", IPAddress(192, 168, 42, 104));
-
+    stm.setNotificationLed(LED_BUILTIN);
+    stm.begin("imu", IPAddress(192, 168, 42, 102), new ModuleCallbacks());
     // Get cpu frequency
     cpu_freq = ESP.getCpuFreqMHz();
     Serial.println(cpu_freq);
@@ -106,7 +118,7 @@ void loop()
         payload["B"] = SPD(s3, s4);
         payload["C"] = SPD(s6, s5);
       
-        STM.publish("sensor/wind0", payload);
+        stm.publish("sensor/wind0", &payload);
         i = (i + 1) % FILTER_N;
     }
 }
