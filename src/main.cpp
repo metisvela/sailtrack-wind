@@ -5,6 +5,8 @@
 #include <freertos/queue.h>
 #include <SailtrackModule.h>
 
+
+//TO DO: CODE IS STUCK IN THE MEASURE TASK. NEED AA FIX
 #define ECHO1 35
 #define ECHO2 33
 #define ECHO3 34
@@ -66,7 +68,7 @@ class ModuleCallbacks: public SailtrackModuleCallbacks {
 void setup()
 {
     stm.setNotificationLed(LED_BUILTIN);
-    stm.begin("imu", IPAddress(192, 168, 42, 102), new ModuleCallbacks());
+    stm.begin("wind", IPAddress(192, 168, 42, 104), new ModuleCallbacks());
     // Get cpu frequency
     cpu_freq = ESP.getCpuFreqMHz();
     Serial.println(cpu_freq);
@@ -113,14 +115,14 @@ void loop()
             s5 += m_carr5[j];
             s6 += m_carr6[j];
         }
-
         payload["A"] = SPD(s1, s2);
         payload["B"] = SPD(s3, s4);
         payload["C"] = SPD(s6, s5);
-      
+    
         stm.publish("sensor/wind0", &payload);
         i = (i + 1) % FILTER_N;
     }
+    Serial.println(xQueueReceive(measure_queue, &measure, portMAX_DELAY) == pdPASS);
 }
 
 void measureTask(void *parameter)
