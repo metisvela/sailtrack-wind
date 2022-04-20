@@ -1,9 +1,6 @@
 #include <Arduino.h>
-
-#include <ArduinoJson.h>
-
-#include <freertos/queue.h>
 #include <SailtrackModule.h>
+#include <freertos/queue.h>
 
 #define ECHO1 35
 #define ECHO2 33
@@ -21,9 +18,13 @@
 #define FILTER_N 100
 
 #define BATTERY_ADC_PIN 35
-#define BATTERY_ADC_MULTIPLIER 1.7
+#define BATTERY_ADC_RESOLUTION 4095
+#define BATTERY_ADC_REF_VOLTAGE 1.1
+#define BATTERY_ESP32_REF_VOLTAGE 3.3
+#define BATTERY_NUM_READINGS 32
 
 #define SPD(m1, m2) .5 * LENGTH * 1e6 * (FILTER_N / m1 - FILTER_N / m2)
+
 SailtrackModule stm;
 
 void measureTask(void *parameter);
@@ -35,7 +36,6 @@ double m_carr3[FILTER_N] = {0};
 double m_carr4[FILTER_N] = {0};
 double m_carr5[FILTER_N] = {0};
 double m_carr6[FILTER_N] = {0};
-
 
 int i = 0;
 
@@ -56,17 +56,25 @@ class ModuleCallbacks: public SailtrackModuleCallbacks {
 		DynamicJsonDocument * payload = new DynamicJsonDocument(300);
 		JsonObject battery = payload->createNestedObject("battery");
 		JsonObject cpu = payload->createNestedObject("cpu");
-		battery["voltage"] = analogRead(BATTERY_ADC_PIN) * BATTERY_ADC_MULTIPLIER / 1000;
+		float avg = 0;
+		for (int i = 0; i < BATTERY_NUM_READINGS; i++) {
+			avg += analogRead(BATTERY_ADC_PIN) / BATTERY_NUM_READINGS;
+			delay(20);
+		}
+		battery["voltage"] = 2 * avg / BATTERY_ADC_RESOLUTION * BATTERY_ESP32_REF_VOLTAGE * BATTERY_ADC_REF_VOLTAGE;
 		cpu["temperature"] = temperatureRead();
 		return payload;
 	}
 };
 
-
-void setup()
-{
+void beginModule() {
     stm.setNotificationLed(LED_BUILTIN);
-    stm.begin("imu", IPAddress(192, 168, 42, 102), new ModuleCallbacks());
+    stm.begin("wind", IPAddress(192, 168, 42, 104), new ModuleCallbacks());
+}
+
+void setup() {
+    beginModule();
+
     // Get cpu frequency
     cpu_freq = ESP.getCpuFreqMHz();
     Serial.println(cpu_freq);
@@ -89,8 +97,7 @@ void setup()
     xTaskCreate(measureTask, "measureTask", TASK_BIG_STACK_SIZE, NULL, TASK_HIGH_PRIORITY, NULL);
 }
 
-void loop()
-{
+void loop() {
     double measure[SENSOR_N*2];
     DynamicJsonDocument payload(500);
     if (xQueueReceive(measure_queue, &measure, portMAX_DELAY) == pdPASS)
@@ -123,8 +130,7 @@ void loop()
     }
 }
 
-void measureTask(void *parameter)
-{
+void measureTask(void *parameter) {
     //fase di setup
     TickType_t xLastWakeTime;
     const TickType_t xFrequency = 10 / portTICK_RATE_MS;
@@ -141,8 +147,7 @@ void measureTask(void *parameter)
     
     unsigned int idx = 0;
     //loop
-    for (;;)
-    {
+    for (;;) {
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
 
         attachInterrupt(digitalPinToInterrupt(echo[idx]), changeISR, CHANGE);
@@ -172,8 +177,7 @@ void measureTask(void *parameter)
     }
 }
 
-static void ICACHE_RAM_ATTR changeISR()
-{
+static void ICACHE_RAM_ATTR changeISR() {
     //gets cpu timing when echo pin changes logic state
     cpuTimePlaceholder = ESP.getCycleCount(); //get cpu time before evaluating if statement
     // digitalWrite(DEBUG, !digitalRead(DEBUG));
