@@ -22,6 +22,7 @@
 #define BATTERY_ADC_REF_VOLTAGE 1.1
 #define BATTERY_ESP32_REF_VOLTAGE 3.3
 #define BATTERY_NUM_READINGS 32
+#define BATTERY_READING_DELAY_MS 20
 
 #define SPD(m1, m2) .5 * LENGTH * 1e6 * (FILTER_N / m1 - FILTER_N / m2)
 
@@ -52,28 +53,19 @@ QueueHandle_t raw_measure_queue, measure_queue;
 
 
 class ModuleCallbacks: public SailtrackModuleCallbacks {
-	DynamicJsonDocument * getStatus() {
-		DynamicJsonDocument * payload = new DynamicJsonDocument(300);
-		JsonObject battery = payload->createNestedObject("battery");
-		JsonObject cpu = payload->createNestedObject("cpu");
+    void onStatusPublish(JsonObject status) {
+		JsonObject battery = status.createNestedObject("battery");
 		float avg = 0;
 		for (int i = 0; i < BATTERY_NUM_READINGS; i++) {
 			avg += analogRead(BATTERY_ADC_PIN) / BATTERY_NUM_READINGS;
-			delay(20);
+			delay(BATTERY_READING_DELAY_MS);
 		}
 		battery["voltage"] = 2 * avg / BATTERY_ADC_RESOLUTION * BATTERY_ESP32_REF_VOLTAGE * BATTERY_ADC_REF_VOLTAGE;
-		cpu["temperature"] = temperatureRead();
-		return payload;
 	}
 };
 
-void beginModule() {
-    stm.setNotificationLed(LED_BUILTIN);
-    stm.begin("wind", IPAddress(192, 168, 42, 104), new ModuleCallbacks());
-}
-
 void setup() {
-    beginModule();
+    stm.begin("wind", IPAddress(192, 168, 42, 104), new ModuleCallbacks());
 
     // Get cpu frequency
     cpu_freq = ESP.getCpuFreqMHz();
@@ -94,7 +86,7 @@ void setup() {
     measure_queue = xQueueCreate(1, sizeof(double[3][3]));
 
     // Create tasks
-    xTaskCreate(measureTask, "measureTask", TASK_BIG_STACK_SIZE, NULL, TASK_HIGH_PRIORITY, NULL);
+    xTaskCreate(measureTask, "measureTask", STM_TASK_BIG_STACK_SIZE, NULL, STM_TASK_HIGH_PRIORITY, NULL);
 }
 
 void loop() {
@@ -125,7 +117,7 @@ void loop() {
         payload["B"] = SPD(s3, s4);
         payload["C"] = SPD(s6, s5);
       
-        stm.publish("sensor/wind0", &payload);
+        stm.publish("sensor/wind0", payload.as<JsonObjectConst>());
         i = (i + 1) % FILTER_N;
     }
 }
