@@ -1,12 +1,7 @@
 #include <Arduino.h>
-
-#include <ArduinoJson.h>
-
-#include <freertos/queue.h>
 #include <SailtrackModule.h>
+#include <freertos/queue.h>
 
-
-//TO DO: CODE IS STUCK IN THE MEASURE TASK. NEED AA FIX
 #define ECHO1 35
 #define ECHO2 33
 #define ECHO3 34
@@ -23,9 +18,14 @@
 #define FILTER_N 100
 
 #define BATTERY_ADC_PIN 35
-#define BATTERY_ADC_MULTIPLIER 1.7
+#define BATTERY_ADC_RESOLUTION 4095
+#define BATTERY_ADC_REF_VOLTAGE 1.1
+#define BATTERY_ESP32_REF_VOLTAGE 3.3
+#define BATTERY_NUM_READINGS 32
+#define BATTERY_READING_DELAY_MS 20
 
 #define SPD(m1, m2) .5 * LENGTH * 1e6 * (FILTER_N / m1 - FILTER_N / m2)
+
 SailtrackModule stm;
 
 void measureTask(void *parameter);
@@ -37,7 +37,6 @@ double m_carr3[FILTER_N] = {0};
 double m_carr4[FILTER_N] = {0};
 double m_carr5[FILTER_N] = {0};
 double m_carr6[FILTER_N] = {0};
-
 
 int i = 0;
 
@@ -54,21 +53,20 @@ QueueHandle_t raw_measure_queue, measure_queue;
 
 
 class ModuleCallbacks: public SailtrackModuleCallbacks {
-	DynamicJsonDocument * getStatus() {
-		DynamicJsonDocument * payload = new DynamicJsonDocument(300);
-		JsonObject battery = payload->createNestedObject("battery");
-		JsonObject cpu = payload->createNestedObject("cpu");
-		battery["voltage"] = analogRead(BATTERY_ADC_PIN) * BATTERY_ADC_MULTIPLIER / 1000;
-		cpu["temperature"] = temperatureRead();
-		return payload;
+    void onStatusPublish(JsonObject status) {
+		JsonObject battery = status.createNestedObject("battery");
+		float avg = 0;
+		for (int i = 0; i < BATTERY_NUM_READINGS; i++) {
+			avg += analogRead(BATTERY_ADC_PIN) / BATTERY_NUM_READINGS;
+			delay(BATTERY_READING_DELAY_MS);
+		}
+		battery["voltage"] = 2 * avg / BATTERY_ADC_RESOLUTION * BATTERY_ESP32_REF_VOLTAGE * BATTERY_ADC_REF_VOLTAGE;
 	}
 };
 
-
-void setup()
-{
-    stm.setNotificationLed(LED_BUILTIN);
+void setup() {
     stm.begin("wind", IPAddress(192, 168, 42, 104), new ModuleCallbacks());
+
     // Get cpu frequency
     cpu_freq = ESP.getCpuFreqMHz();
     Serial.println(cpu_freq);
@@ -88,11 +86,10 @@ void setup()
     measure_queue = xQueueCreate(1, sizeof(double[3][3]));
 
     // Create tasks
-    xTaskCreate(measureTask, "measureTask", TASK_BIG_STACK_SIZE, NULL, TASK_HIGH_PRIORITY, NULL);
+    xTaskCreate(measureTask, "measureTask", STM_TASK_BIG_STACK_SIZE, NULL, STM_TASK_HIGH_PRIORITY, NULL);
 }
 
-void loop()
-{
+void loop() {
     double measure[SENSOR_N*2];
     DynamicJsonDocument payload(500);
     if (xQueueReceive(measure_queue, &measure, portMAX_DELAY) == pdPASS)
@@ -115,18 +112,17 @@ void loop()
             s5 += m_carr5[j];
             s6 += m_carr6[j];
         }
+
         payload["A"] = SPD(s1, s2);
         payload["B"] = SPD(s3, s4);
         payload["C"] = SPD(s6, s5);
-    
-        stm.publish("sensor/wind0", &payload);
+      
+        stm.publish("sensor/wind0", payload.as<JsonObjectConst>());
         i = (i + 1) % FILTER_N;
     }
-    Serial.println(xQueueReceive(measure_queue, &measure, portMAX_DELAY) == pdPASS);
 }
 
-void measureTask(void *parameter)
-{
+void measureTask(void *parameter) {
     //fase di setup
     TickType_t xLastWakeTime;
     const TickType_t xFrequency = 10 / portTICK_RATE_MS;
@@ -143,8 +139,7 @@ void measureTask(void *parameter)
     
     unsigned int idx = 0;
     //loop
-    for (;;)
-    {
+    for (;;) {
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
 
         attachInterrupt(digitalPinToInterrupt(echo[idx]), changeISR, CHANGE);
@@ -174,8 +169,7 @@ void measureTask(void *parameter)
     }
 }
 
-static void ICACHE_RAM_ATTR changeISR()
-{
+static void ICACHE_RAM_ATTR changeISR() {
     //gets cpu timing when echo pin changes logic state
     cpuTimePlaceholder = ESP.getCycleCount(); //get cpu time before evaluating if statement
     // digitalWrite(DEBUG, !digitalRead(DEBUG));
