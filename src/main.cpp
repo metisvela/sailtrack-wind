@@ -173,5 +173,5 @@ static void ICACHE_RAM_ATTR changeISR() {
     //gets cpu timing when echo pin changes logic state
     cpuTimePlaceholder = ESP.getCycleCount(); //get cpu time before evaluating if statement
     // digitalWrite(DEBUG, !digitalRead(DEBUG));
-    xQueueSendToBackFromISR(raw_measure_queue, (void *)&cpuTimePlaceholder, pdFALSE);
+    xQueueSendToBackFromISR(raw_measure_queue, (void *)&cpuTimePlaceholder, NULL);
 }
