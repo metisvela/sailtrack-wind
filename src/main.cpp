@@ -18,11 +18,30 @@
 #define LENGTH .475 //[m]
 #define SPD(m1, m2) .5 * LENGTH *(1 / m1 - 1 / m2)
 
-int cpu_freq = 0;
+#define BATTERY_ADC_PIN 35
+#define BATTERY_ADC_RESOLUTION 4095
+#define BATTERY_ADC_REF_VOLTAGE 1.1
+#define BATTERY_ESP32_REF_VOLTAGE 3.3
+#define BATTERY_NUM_READINGS 32
+#define BATTERY_READING_DELAY_MS 20
 
 static bool echo_isr(mcpwm_unit_t mcpwm, mcpwm_capture_channel_id_t cap_sig, const cap_event_data_t *edata, void *arg);
 
 static QueueHandle_t measure_queue;
+
+SailtrackModule stm;
+
+class ModuleCallbacks: public SailtrackModuleCallbacks {
+    void onStatusPublish(JsonObject status) {
+		JsonObject battery = status.createNestedObject("battery");
+		float avg = 0;
+		for (int i = 0; i < BATTERY_NUM_READINGS; i++) {
+			avg += analogRead(BATTERY_ADC_PIN) / BATTERY_NUM_READINGS;
+			delay(BATTERY_READING_DELAY_MS);
+		}
+		battery["voltage"] = 2 * avg / BATTERY_ADC_RESOLUTION * BATTERY_ESP32_REF_VOLTAGE * BATTERY_ADC_REF_VOLTAGE;
+	}
+};
 
 typedef struct pulse
 {
@@ -75,6 +94,9 @@ void setup()
         return;
     }
     Serial.println("Queue created...");
+
+    stm.begin("wind0", IPAddress(192, 168, 42, 100), new ModuleCallbacks());
+
 }
 
 unsigned int trig1[] = {TRIGGER_F, TRIGGER_L, TRIGGER_R};
@@ -84,11 +106,8 @@ unsigned int idx = 0;
 static uint32_t cap_val_begin_of_sample[] = {0, 0, 0};
 static uint32_t cap_val_end_of_sample[] = {0, 0, 0};
 
-// int n = 10;
-
 void loop()
 {
-    // if(n!=0){
     double measure;
     double v_sound;
     double raw_pulses_us[6];
@@ -103,7 +122,7 @@ void loop()
         delayMicroseconds(20);
         GPIO.out_w1tc = (1 << trig1[idx] | 1 << trig2[idx]);
 
-        while (xQueueReceive(measure_queue, &p, 50) == pdTRUE)
+        while (xQueueReceive(measure_queue, &p, 200) == pdTRUE)
         {
             // Serial.printf("%d: %.3f us\n",p.cap_id, p.pulse_count*(1000000.0 / esp_clk_apb_freq()));
             m[p.cap_id] = p.pulse_count ;
@@ -114,36 +133,30 @@ void loop()
         switch (idx)
         {
         case 0:
-            measure = esp_clk_apb_freq() * .5 * LENGTH *(1.0 / m[0] - 1.0 / m[1]);
-            v_sound = esp_clk_apb_freq() * .5 * LENGTH *(1.0 / m[0] + 1.0 / m[1]);
             raw_pulses_us[0] = m[0]*(1000000.0 / esp_clk_apb_freq());
             raw_pulses_us[1] = m[1]*(1000000.0 / esp_clk_apb_freq());
             break;
         case 1:
-            measure = esp_clk_apb_freq() * .5 * LENGTH *(1.0 / m[1] - 1.0 / m[2]);
-            v_sound = esp_clk_apb_freq() * .5 * LENGTH *(1.0 / m[1] + 1.0 / m[2]);
             raw_pulses_us[2] = m[1]*(1000000.0 / esp_clk_apb_freq());
             raw_pulses_us[3] = m[2]*(1000000.0 / esp_clk_apb_freq());
             break;
         case 2:
-            measure = esp_clk_apb_freq() * .5 * LENGTH *(1.0 / m[2] - 1.0 / m[0]);
-            v_sound = esp_clk_apb_freq() * .5 * LENGTH *(1.0 / m[2] + 1.0 / m[0]);
             raw_pulses_us[4] = m[2]*(1000000.0 / esp_clk_apb_freq());
             raw_pulses_us[5] = m[0]*(1000000.0 / esp_clk_apb_freq());
             break;
         }
-
-
-        // Serial.printf("%f\t%f\t", measure, v_sound);
     }
-    Serial.printf("%f\t", raw_pulses_us[0]);
-    Serial.printf("%f\t", raw_pulses_us[1]);
-    Serial.printf("%f\t", raw_pulses_us[2]);
-    Serial.printf("%f\t", raw_pulses_us[3]);
-    Serial.printf("%f\t", raw_pulses_us[4]);
-    Serial.printf("%f\n", raw_pulses_us[5]);
-    // n--;
-    // }
+
+    StaticJsonDocument<STM_JSON_DOCUMENT_MEDIUM_SIZE> doc;
+
+    doc["raw_us_0"] = raw_pulses_us[0];
+    doc["raw_us_1"] = raw_pulses_us[1];
+    doc["raw_us_2"] = raw_pulses_us[2];
+    doc["raw_us_3"] = raw_pulses_us[3];
+    doc["raw_us_4"] = raw_pulses_us[4];
+    doc["raw_us_5"] = raw_pulses_us[5];
+
+    stm.publish("wind0/raw", doc.as<JsonObjectConst>());
 }
 
 static bool echo_isr(mcpwm_unit_t mcpwm, mcpwm_capture_channel_id_t cap_sig, const cap_event_data_t *edata, void *arg)
