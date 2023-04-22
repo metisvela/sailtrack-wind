@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/metis-vela-unipd/sailtrack-docs/main/Assets/SailTrack%20Logo.svg" width="180">
+  <img src="https://raw.githubusercontent.com/metis-vela-unipd/sailtrack/main/Assets/SailTrack%20Logo.svg" width="180">
 </p>
 
 <p align="center">
@@ -9,7 +9,7 @@
 
 # SailTrack Wind
 
-SailTrack Wind is a component of the SailTrack system, it manages wind data, providing apparent wind speed and direction. To learn more about the SailTrack project, please visit the [documentation repository](https://github.com/metis-vela-unipd/sailtrack-docs).
+SailTrack Wind is a component of the SailTrack system, it manages wind data, providing apparent wind speed and direction. To learn more about the SailTrack project, please visit the [project repository](https://github.com/metis-vela-unipd/sailtrack).
 
 The SailTrack Wind module is based on a battery powered LilyGo TTGO T7, consisting of an [ESP32](https://www.espressif.com/en/products/socs/esp32) microcontroller, connected to a custom-built ultrasonic anemometer. For a more detailed hardware description of the module, please refer to the [Bill Of Materials](hardware/BOM.csv).
 
@@ -52,4 +52,4 @@ Contributors are welcome. If you are a student of the University of Padua, pleas
 
 ## License
 
-Copyright © 2022, [Métis Vela Unipd](https://github.com/metis-vela-unipd). SailTrack Wind is available under the [GPL-3.0 license](https://www.gnu.org/licenses/gpl-3.0.en.html). See the LICENSE file for more info.
+Copyright © 2023, [Métis Vela Unipd](https://github.com/metis-vela-unipd). SailTrack Wind is available under the [GPL-3.0 license](https://www.gnu.org/licenses/gpl-3.0.en.html). See the LICENSE file for more info.
