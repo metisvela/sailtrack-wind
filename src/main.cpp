@@ -1,6 +1,6 @@
 // Sonic Anemometer
 #include <SailtrackModule.h>
-#include <math.h> 
+#include <math.h>
   
 // -------------------------- Configuration -------------------------- //
 
@@ -12,19 +12,18 @@
 #define BATTERY_NUM_READINGS 	  	32
 #define BATTERY_READING_DELAY_MS	20
 
-#define W_CALM						529		//West sensor reading in still air
-#define E_CALM 						535		//East sensor reading in still air
-#define W_NORTH 					530		//West sensor reading in north wind
-#define E_NORTH 					537		//East sensor reading in north wind
-#define W_EAST						525		//West sensor reading in east wind
-#define E_EAST						540		//East sensor reading in east wind
-#define WINDSPEED					15.3	//Wind speed during calibration
+// i pimn io generarno impulsi, i vout sono le tensioni ottenute
+#define PIN_IO1 					13
+#define PIN_VOUT1					3
+#define PIN_IO2 					0
+#define PIN_VOUT2					12
+#define PIN_IO3 					2
+#define PIN_VOUT3					38
+#define PIN_IO4 					14
+#define PIN_VOUT4					4
 
-#define WEST_PIN					25		//West sensor analog pin
-#define EAST_PIN					27		//East sensor analog pin
-
-#define LOOP_TASK_INTERVAL_MS  		50 		// Da ridefinire TODO
-
+#define SIGNAL						0
+#define LOOP_TASK_INTERVAL_MS  		1 		// Da ridefinire //TODO
 // -------------------------------------------------------------------- //
 
 SailtrackModule stm;
@@ -43,32 +42,25 @@ class ModuleCallbacks: public SailtrackModuleCallbacks {
 
 void setup(){
     stm.begin("wind_phase", IPAddress(192, 168, 42, 106), new ModuleCallbacks());
-    stm.subscribe("sensor/wind0");	//TODO non capisco come funziona
+    stm.subscribe("sensor/wind0");
 }
 
 void loop(){
-
-int Vwest = analogRead(WEST_PIN);        // Measure west sensor voltage
-Vwest = analogRead(WEST_PIN);        	 // Repeat for settling time //TODO non capisco perche venga fatta 2 volte
-int Veast = analogRead(EAST_PIN);        //Measure east sensor voltage
-Veast = analogRead(EAST_PIN);
-double northwind = (Vwest + Veast - E_CALM - W_CALM) / (W_NORTH + E_NORTH - E_CALM - W_CALM) * WINDSPEED;
-double eastwind = (Vwest - W_CALM - (Veast - E_CALM)) / (W_EAST - W_CALM - (E_EAST - E_CALM)) * WINDSPEED;
-int wind = round(sqrt(northwind * northwind + eastwind * eastwind)); 	//Calculate wind speed
-int heading = 270 - std::round(atan2((double) - northwind, (double) - eastwind) * 57.3);	//(northwind<0);
-
-
-//TODO forse non serve grazie ad atan2 function line 59
-if (heading > 359)
-	heading = heading - 360; 	//Calculate wind direction 
+	int distanza;
+	int tempoandatax;
+	int temporitornox;
+	int tempoandatay;
+	int temporitornoy;
+	double vy = 0.5 * (distanza) * ((1/tempoandatay) - (1/temporitornoy));
+	double vx = 0.5 * (distanza) * ((1/tempoandatax) - (1/temporitornox));
+	double v = sqrt(vy*vy + vx*vx);
+	double theta = atan2(vx , vy);
+	//TODO sviluppare una relazione per la velocità del suono e la temperatura?
 
 
 TickType_t lastWakeTime = xTaskGetTickCount();
-StaticJsonDocument<STM_JSON_DOCUMENT_MEDIUM_SIZE> doc;	
-doc["west_sensor_reading"]=Vwest;
-doc["east_sensor_reading"]=Veast;
-doc["wind_speed"]=wind; 		// in m/s
-doc["wind_direction"]=heading;	// in degrees
+StaticJsonDocument<STM_JSON_DOCUMENT_MEDIUM_SIZE> doc;
+// qui va creato il doc //TODO
 stm.publish("sensor/wind0", doc.as<JsonObjectConst>());
 
 vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(LOOP_TASK_INTERVAL_MS));
