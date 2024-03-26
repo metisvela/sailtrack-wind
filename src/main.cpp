@@ -1,59 +1,29 @@
-#include <Arduino.h>
-#include <SailtrackModule.h>
-#include <freertos/queue.h>
 
-#define ECHO1 35
-#define ECHO2 33
-#define ECHO3 34
+#include "Arduino.h"
+#include "SailtrackModule.h"
 
-#define TRIGGER1 18
-#define TRIGGER2 19
-#define TRIGGER3 23
 
-#define DEBUG 15
+#define MQTT_PUBLISH_FREQ_HZ		5
+#define AHRS_UPDATE_FREQ_HZ			100
 
-#define LENGTH .475 //[m]
+#define BATTERY_ADC_PIN 			15
+#define BATTERY_ADC_RESOLUTION 		4095
+#define BATTERY_ADC_REF_VOLTAGE 	1.1
+#define BATTERY_ESP32_REF_VOLTAGE	3.3
+#define BATTERY_NUM_READINGS 		32
+#define BATTERY_READING_DELAY_MS	20
 
-#define SENSOR_N 3
-#define FILTER_N 100
+#define I2C_SDA_PIN 				27
+#define I2C_SCL_PIN 				25
 
-#define BATTERY_ADC_PIN 35
-#define BATTERY_ADC_RESOLUTION 4095
-#define BATTERY_ADC_REF_VOLTAGE 1.1
-#define BATTERY_ESP32_REF_VOLTAGE 3.3
-#define BATTERY_NUM_READINGS 32
-#define BATTERY_READING_DELAY_MS 20
+#define LOOP_TASK_INTERVAL_MS		1000 / AHRS_UPDATE_FREQ_HZ
+#define MQTT_TASK_INTERVAL_MS	 	1000 / MQTT_PUBLISH_FREQ_HZ
 
-#define SPD(m1, m2) .5 * LENGTH * 1e6 * (FILTER_N / m1 - FILTER_N / m2)
 
 SailtrackModule stm;
 
-void measureTask(void *parameter);
-static void ICACHE_RAM_ATTR changeISR();
-
-double m_carr1[FILTER_N] = {0};
-double m_carr2[FILTER_N] = {0};
-double m_carr3[FILTER_N] = {0};
-double m_carr4[FILTER_N] = {0};
-double m_carr5[FILTER_N] = {0};
-double m_carr6[FILTER_N] = {0};
-
-int i = 0;
-
-int cpu_freq = 0;
-
-// ISR variables
-volatile unsigned long cpuTimeRising = 0;
-volatile unsigned long elapsedCpuTime = 0;
-volatile unsigned long cpuTimePlaceholder = 0;
-volatile unsigned long ToF = 0;
-volatile bool evalFlag = false;
-
-QueueHandle_t raw_measure_queue, measure_queue;
-
-
 class ModuleCallbacks: public SailtrackModuleCallbacks {
-    void onStatusPublish(JsonObject status) {
+	void onStatusPublish(JsonObject status) {
 		JsonObject battery = status.createNestedObject("battery");
 		float avg = 0;
 		for (int i = 0; i < BATTERY_NUM_READINGS; i++) {
@@ -64,114 +34,29 @@ class ModuleCallbacks: public SailtrackModuleCallbacks {
 	}
 };
 
-void setup() {
-    stm.begin("wind", IPAddress(192, 168, 42, 104), new ModuleCallbacks());
-
-    // Get cpu frequency
-    cpu_freq = ESP.getCpuFreqMHz();
-    Serial.println(cpu_freq);
-
-    // Setp PINs and interrupts
-    pinMode(TRIGGER1, OUTPUT);
-    pinMode(TRIGGER2, OUTPUT);
-    pinMode(TRIGGER3, OUTPUT);
-    pinMode(ECHO1, INPUT);
-    pinMode(ECHO2, INPUT);
-    pinMode(ECHO3, INPUT);
-
-    pinMode(DEBUG, OUTPUT);
-
-    // Create queues
-    raw_measure_queue = xQueueCreate(1, sizeof(unsigned long));
-    measure_queue = xQueueCreate(1, sizeof(double[3][3]));
-
-    // Create tasks
-    xTaskCreate(measureTask, "measureTask", STM_TASK_BIG_STACK_SIZE, NULL, STM_TASK_HIGH_PRIORITY, NULL);
+void onMqttMessage(const char * topic, JsonObjectConst message) {
+    //TODO if necessary implememt this function
 }
+
+//beginWIND(){...}
+
+void setup()
+{   
+    //TODO add wind.begin()
+    stm.begin("windtest", IPAddress(192, 168, 42, 117), new ModuleCallbacks());
+
+    Serial.begin(115200);
+}
+
 
 void loop() {
-    double measure[SENSOR_N*2];
-    DynamicJsonDocument payload(500);
-    if (xQueueReceive(measure_queue, &measure, portMAX_DELAY) == pdPASS)
-    {
-        m_carr1[i] = measure[0];
-        m_carr2[i] = measure[1];
-        m_carr3[i] = measure[2];
-        m_carr4[i] = measure[3];
-        m_carr5[i] = measure[4];
-        m_carr6[i] = measure[5];     
-
-        double s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0;
-
-        for (size_t j = 0; j < FILTER_N; j++)
-        {
-            s1 += m_carr1[j];
-            s2 += m_carr2[j];
-            s3 += m_carr3[j];
-            s4 += m_carr4[j];
-            s5 += m_carr5[j];
-            s6 += m_carr6[j];
-        }
-
-        payload["A"] = SPD(s1, s2);
-        payload["B"] = SPD(s3, s4);
-        payload["C"] = SPD(s6, s5);
-      
-        stm.publish("sensor/wind0", payload.as<JsonObjectConst>());
-        i = (i + 1) % FILTER_N;
-    }
-}
-
-void measureTask(void *parameter) {
-    //fase di setup
-    TickType_t xLastWakeTime;
-    const TickType_t xFrequency = 10 / portTICK_RATE_MS;
-
-    xLastWakeTime = xTaskGetTickCount();
-
-    unsigned long raw_elapsedCpuTime = 0;
-    double measure[SENSOR_N*2];
-
-    unsigned int echo[]  = {ECHO1, ECHO2, ECHO3, ECHO2, ECHO1, ECHO3};
-    unsigned int trig1[] = {TRIGGER1, TRIGGER1, TRIGGER2, TRIGGER2, TRIGGER3, TRIGGER3};
-    unsigned int trig2[] = {TRIGGER2, TRIGGER2, TRIGGER3, TRIGGER3, TRIGGER1, TRIGGER1};
-
-    
-    unsigned int idx = 0;
-    //loop
-    for (;;) {
-        vTaskDelayUntil(&xLastWakeTime, xFrequency);
-
-        attachInterrupt(digitalPinToInterrupt(echo[idx]), changeISR, CHANGE);
-
-        digitalWrite(trig1[idx], HIGH);
-        digitalWrite(trig2[idx], HIGH);
-        delayMicroseconds(20);
-        digitalWrite(trig1[idx], LOW);
-        digitalWrite(trig2[idx], LOW);
-
-        if (xQueueReceive(raw_measure_queue, &raw_elapsedCpuTime, portMAX_DELAY) == pdPASS)
-        {
-            cpuTimeRising = raw_elapsedCpuTime;
-        }
-        if (xQueueReceive(raw_measure_queue, &raw_elapsedCpuTime, portMAX_DELAY) == pdPASS)
-        {
-            elapsedCpuTime = (raw_elapsedCpuTime - cpuTimeRising);
-            detachInterrupt(digitalPinToInterrupt(echo[idx]));
-            measure[idx] = elapsedCpuTime / cpu_freq; // [us]
-        }
-
-        if (idx == SENSOR_N*2 - 1)
-            xQueueSendToFront(measure_queue, (void *)&measure, 100 / portTICK_RATE_MS);
-
-        idx = (idx + 1) % (SENSOR_N*2);
-        taskYIELD();
-    }
-}
-
-static void ICACHE_RAM_ATTR changeISR() {
-    //gets cpu timing when echo pin changes logic state
-    cpuTimePlaceholder = ESP.getCycleCount(); //get cpu time before evaluating if statement
-    // digitalWrite(DEBUG, !digitalRead(DEBUG));
-    xQueueSendToBackFromISR(raw_measure_queue, (void *)&cpuTimePlaceholder, NULL);
+	
+	TickType_t lastWakeTime = xTaskGetTickCount();
+	if (true) { //TODo check valid data
+		StaticJsonDocument<STM_JSON_DOCUMENT_MEDIUM_SIZE> doc;
+		doc["test1"] = "15";		
+		doc["test"] = "16";
+		stm.publish("sensor/gps0", doc.as<JsonObjectConst>());
+	}
+	vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(LOOP_TASK_INTERVAL_MS));
 }
