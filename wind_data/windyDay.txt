@@ -1,0 +1,6 @@
+2024-04-06 15:08:01: IMU: aX =    396 | aY =    852 | aZ =  17972 | Temp = 26.55 | gX =   -190 | gY =    -14 | gZ =    -76
+2024-04-06 15:08:01: Wind: Speed = 0.00 km/h, Direction = 0 degrees
+2024-04-06 15:08:02: IMU: aX =    472 | aY =    860 | aZ =  17920 | Temp = 26.55 | gX =   -184 | gY =    -23 | gZ =   -104
+2024-04-06 15:08:02: Wind: Speed = 0.00 km/h, Direction = 0 degrees
+2024-04-06 15:08:03: IMU: aX =    848 | aY =    944 | aZ =  17924 | Temp = 26.46 | gX =   -189 | gY =     42 | gZ =    -88
+2024-04-06 15:08:03: Wind: Speed = 0.00 km/h, Direction = 0 degrees
