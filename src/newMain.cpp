@@ -88,50 +88,51 @@ uint16_t readRawAngle() { //tested working
 
 long windDir() //tested working
 {
-    uint16_t rawAngle = readRawAngle();
-    long windDirN = map(rawAngle,0,4095,0,360);
-    return windDirN;
+  uint16_t rawAngle = readRawAngle();
+  long windDirN = map(rawAngle,0,4095,0,360);
+  return windDirN;
 }
 
-int counterAvWindDir;
+// Is this needed or does the sailor prefer actual angle 
 long AvWindDir() //Not tested but working
 {
-    long totalDir;
-    long AvWindDirN;
-    if(counterAvWindDir < 10)
-    {
-        totalDir = totalDir+windDir();
-        counterAvWindDir++;
-        return 31;
-    }
-    else{
-        AvWindDirN = totalDir/counterAvWindDir; 
-        counterAvWindDir = 0;
-        return 69;
-    }
-    return 0;
+  int counterAvWindDir;
+  long totalDir;
+  long AvWindDirN;
+  if(counterAvWindDir < 10){
+    totalDir = totalDir+windDir();
+    counterAvWindDir++;
+    return 31;
+  }
+  else{
+    AvWindDirN = totalDir/counterAvWindDir; 
+    counterAvWindDir = 0;
+    return 69;
+  }
+  return 0;
 
 }
 
-unsigned long lastTime = 0; //global varibles for rpm calculation
-float lastAngle = 0;
+
 
 float calculateRPM(float currentAngle) { //not tested
-    unsigned long currentTime = millis();
+  
+  unsigned long lastTime = 0; //global varibles for rpm calculation
+  float lastAngle = 0;
+  
+  unsigned long currentTime = millis();
 
-    float timeDiff = (currentTime - lastTime) / 1000.0; // Time difference in seconds
-    float angleDiff = currentAngle - lastAngle;
+  float timeDiff = (currentTime - lastTime) / 1000.0; // Time difference in seconds
+  float angleDiff = currentAngle - lastAngle;
 
-    if (angleDiff < 0) {
-        angleDiff += 360.0; 
-    }
+  if (angleDiff < 0) {
+    angleDiff += 360.0; 
+  }
 
-    float rpm = (angleDiff / 360.0) / timeDiff * 60.0; // Convert to RPM
-
-    lastAngle = currentAngle;
-    lastTime = currentTime;
-
-    return rpm;
+  float rpm = (angleDiff / 360.0) / timeDiff * 60.0; // Convert to RPM
+  lastAngle = currentAngle;
+  lastTime = currentTime;
+  return rpm;
 }
 
 void loop() {
