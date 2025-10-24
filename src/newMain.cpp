@@ -102,21 +102,20 @@ long AvWindDir() //Not tested but working
   if(counterAvWindDir < 10){
     totalDir = totalDir+windDir();
     counterAvWindDir++;
-    return 31;
+    return AvWindDirN;
   }
   else{
     AvWindDirN = totalDir/counterAvWindDir; 
     counterAvWindDir = 0;
-    return 69;
+    return AvWindDirN;
   }
-  return 0;
 
 }
 
 
 
 float calculateRPM(float currentAngle) { //not tested
-  
+
   unsigned long lastTime = 0; //global varibles for rpm calculation
   float lastAngle = 0;
   
