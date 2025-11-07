@@ -52,6 +52,34 @@ when to tack() to implement on the core
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <SailtrackModule.h>
+
+#define MQTT_PUBLISH_FREQ_HZ		5
+#define AHRS_UPDATE_FREQ_HZ			5
+
+#define BATTERY_ADC_PIN 			35
+#define BATTERY_ADC_RESOLUTION 		4095
+#define BATTERY_ADC_REF_VOLTAGE 	1.1
+#define BATTERY_ESP32_REF_VOLTAGE	3.3
+#define BATTERY_NUM_READINGS 		32
+#define BATTERY_READING_DELAY_MS	20
+
+#define LOOP_TASK_INTERVAL_MS		5
+#define MQTT_TASK_INTERVAL_MS	 	1000 / MQTT_PUBLISH_FREQ_HZ
+
+SailtrackModule stm;
+
+class ModuleCallbacks: public SailtrackModuleCallbacks {
+    void onStatusPublish(JsonObject status) {
+		JsonObject battery = status.createNestedObject("battery");
+		float avg = 0;
+		for (int i = 0; i < BATTERY_NUM_READINGS; i++) {
+			avg += analogRead(BATTERY_ADC_PIN) / BATTERY_NUM_READINGS;
+			delay(BATTERY_READING_DELAY_MS);
+		}
+		battery["voltage"] = 2 * avg / BATTERY_ADC_RESOLUTION * BATTERY_ESP32_REF_VOLTAGE * BATTERY_ADC_REF_VOLTAGE;
+	}
+};
 
 // AS5600 I2C address
 #define AS5600_ADDR 0x36
@@ -60,12 +88,8 @@ when to tack() to implement on the core
 #define AS5600_RAW_ANGLE_HIGH 0x0C
 #define AS5600_RAW_ANGLE_LOW 0x0D
 
-void setup() {
-  Wire.begin();  // Initialize I2C communication
-  Serial.begin(115200); // Initialize serial communication
-  while (!Serial);
-  Serial.println("AS5600 Magnetic Encoder Test");
-}
+
+
 
 uint16_t readRawAngle() { //tested working
   Wire.beginTransmission(AS5600_ADDR);
@@ -86,15 +110,15 @@ uint16_t readRawAngle() { //tested working
 
 }
 
-long windDir() //tested working
+int windDir() //tested working
 {
   uint16_t rawAngle = readRawAngle();
-  long windDirN = map(rawAngle,0,4095,0,360);
+  int windDirN = map(rawAngle,0,4095,0,360);
   return windDirN;
 }
 
 // Is this needed or does the sailor prefer actual angle 
-long AvWindDir() //Not tested but working
+/*long AvWindDir() //Not tested but working
 {
   int counterAvWindDir;
   long totalDir;
@@ -134,19 +158,47 @@ float calculateRPM(float currentAngle) { //not tested
   return rpm;
 }
 
+*/
+
+void mqttTask(void * pvArguments) {
+	TickType_t lastWakeTime = xTaskGetTickCount();
+	while (true) {
+		StaticJsonDocument<STM_JSON_DOCUMENT_MEDIUM_SIZE> doc;
+
+		JsonObject wind = doc.createNestedObject("wind");
+    wind["Direction"]= windDir();
+		
+
+		stm.publish("sensor/wind", doc.as<JsonObjectConst>());
+
+		vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(MQTT_TASK_INTERVAL_MS));
+	}
+}
+
+void setup() {
+  Wire.begin();  // Initialize I2C communication
+  Serial.begin(115200); // Initialize serial communication
+  while (!Serial);
+  Serial.println("AS5600 Magnetic Encoder Test");
+
+  stm.begin("wind", IPAddress(192, 168, 42, 104), new ModuleCallbacks());
+  xTaskCreate(mqttTask, "mqttTask", STM_TASK_MEDIUM_STACK_SIZE, NULL, STM_TASK_MEDIUM_PRIORITY, NULL);
+
+}
+
 void loop() {
+  TickType_t lastWakeTime = xTaskGetTickCount();
+
   uint16_t rawAngle = readRawAngle();
-  float rpm = calculateRPM(windDir());
 
   Serial.print("Raw Angle: ");
   Serial.println(rawAngle);
   Serial.print("Angle: ");
   Serial.println(windDir());
-  Serial.print("AV Angle: ");
-  Serial.println(AvWindDir());
-  Serial.print("rpm: ");
-  Serial.println(rpm);
+  Serial.println("________");
 
+
+	vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(LOOP_TASK_INTERVAL_MS));
 
   delay(100); // Wait for 100ms
 }
