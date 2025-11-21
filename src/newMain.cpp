@@ -1,204 +1,124 @@
-/*
-wind compass object()
-{
-	for better calculating some datas using wind direction
-	0 degree will be where the wind is coming from
-}
-
-true wind calculator() to implement on the core
-{
-	vectorial differcane of the boat and wind
-}
-
-wind speed function()
-{
-	check how fast the turbine turns (done)
-	can check the avr speed (not used / to be decided)
-	have to check if the boat is moving or not
-}
-
-wind direction function()
-{
-	check the direction of the pointer (done)
-	can check the avr direction (not used / to be decided)
-	have to check if the boat is moving or not
-}
-
-VMG function() to implement on the core
-{
-	Still not super sure on how this would work(are vmg and the tüyler the same thing)
-	have to check the max degree the boat can sail
-	vmg = true wind speed * cos(boat direction to the wind)
-}
-
-gust checker() (not used / to be decided)
-{
-	if there is a big differance of wind speed and direction from the normal ones
-	to check if there is a gust coming or not
-}
-
-lay-line calculator() to implement on the core
-{
-	it is a line begining from the mark. is to show the earliest possible tacking line to go straight to the mark
-	Have to get the coordinates of the mark and the boat
-}
-
-when to tack() to implement on the core
-{
-	combination of VMG and lay-line. Shows when you should tack
-}
-
-*/
-
 #include <Arduino.h>
 #include <Wire.h>
 #include <SailtrackModule.h>
 
-#define MQTT_PUBLISH_FREQ_HZ		5
-#define AHRS_UPDATE_FREQ_HZ			5
+#define MQTT_PUBLISH_FREQ_HZ    5
+#define AHRS_UPDATE_FREQ_HZ     5
 
-#define BATTERY_ADC_PIN 			35
-#define BATTERY_ADC_RESOLUTION 		4095
-#define BATTERY_ADC_REF_VOLTAGE 	1.1
-#define BATTERY_ESP32_REF_VOLTAGE	3.3
-#define BATTERY_NUM_READINGS 		32
-#define BATTERY_READING_DELAY_MS	20
+#define BATTERY_ADC_PIN         35
+#define BATTERY_ADC_RESOLUTION  4095
+#define BATTERY_ADC_REF_VOLTAGE 1.1
+#define BATTERY_ESP32_REF_VOLTAGE 3.3
+#define BATTERY_NUM_READINGS    32
+#define BATTERY_READING_DELAY_MS 20
 
-#define LOOP_TASK_INTERVAL_MS		5
-#define MQTT_TASK_INTERVAL_MS	 	1000 / MQTT_PUBLISH_FREQ_HZ
+#define LOOP_TASK_INTERVAL_MS   5
+#define MQTT_TASK_INTERVAL_MS   1000 / MQTT_PUBLISH_FREQ_HZ
+
+#define HALL_PIN 27   // Hall effect sensor pin
+#define PULSES_PER_REV 1  // Number of pulses per rotation
 
 SailtrackModule stm;
 
 class ModuleCallbacks: public SailtrackModuleCallbacks {
     void onStatusPublish(JsonObject status) {
-		JsonObject battery = status.createNestedObject("battery");
-		float avg = 0;
-		for (int i = 0; i < BATTERY_NUM_READINGS; i++) {
-			avg += analogRead(BATTERY_ADC_PIN) / BATTERY_NUM_READINGS;
-			delay(BATTERY_READING_DELAY_MS);
-		}
-		battery["voltage"] = 2 * avg / BATTERY_ADC_RESOLUTION * BATTERY_ESP32_REF_VOLTAGE * BATTERY_ADC_REF_VOLTAGE;
-	}
+        JsonObject battery = status.createNestedObject("battery");
+        float avg = 0;
+        for (int i = 0; i < BATTERY_NUM_READINGS; i++) {
+            avg += analogRead(BATTERY_ADC_PIN) / BATTERY_NUM_READINGS;
+            delay(BATTERY_READING_DELAY_MS);
+        }
+        battery["voltage"] = 2 * avg / BATTERY_ADC_RESOLUTION * BATTERY_ESP32_REF_VOLTAGE * BATTERY_ADC_REF_VOLTAGE;
+    }
 };
 
-// AS5600 I2C address
 #define AS5600_ADDR 0x36
-
-// Registers for angle data
 #define AS5600_RAW_ANGLE_HIGH 0x0C
 #define AS5600_RAW_ANGLE_LOW 0x0D
 
+uint16_t readRawAngle() {
+    Wire.beginTransmission(AS5600_ADDR);
+    Wire.write(AS5600_RAW_ANGLE_HIGH);
+    Wire.endTransmission(false);
 
-
-
-uint16_t readRawAngle() { //tested working
-  Wire.beginTransmission(AS5600_ADDR);
-  Wire.write(AS5600_RAW_ANGLE_HIGH); // Request the high byte of the raw angle
-  Wire.endTransmission(false);       // Restart I2C (do not release the bus)
-
-  Wire.requestFrom(AS5600_ADDR, 2);  // Request 2 bytes (high and low)
-
-  if (Wire.available() == 2) {
-    uint8_t highByte = Wire.read();
-    uint8_t lowByte = Wire.read();
-    return (highByte << 8) | lowByte; // Combine high and low bytes
-  } else {
-    Serial.println("Error: No data received from AS5600");
-    return 0; // Return 0 if no data is received
-  }
-
-
+    Wire.requestFrom(AS5600_ADDR, 2);
+    if (Wire.available() == 2) {
+        uint8_t highByte = Wire.read();
+        uint8_t lowByte = Wire.read();
+        return (highByte << 8) | lowByte;
+    } else {
+        Serial.println("Error: No data received from AS5600");
+        return 0;
+    }
 }
 
-int windDir() //tested working
-{
-  uint16_t rawAngle = readRawAngle();
-  int windDirN = map(rawAngle,0,4095,0,360);
-  return windDirN;
+int windDir() {
+    uint16_t rawAngle = readRawAngle();
+    int windDirN = map(rawAngle, 0, 4095, 0, 360);
+    return windDirN;
 }
 
-// Is this needed or does the sailor prefer actual angle 
-/*long AvWindDir() //Not tested but working
-{
-  int counterAvWindDir;
-  long totalDir;
-  long AvWindDirN;
-  if(counterAvWindDir < 10){
-    totalDir = totalDir+windDir();
-    counterAvWindDir++;
-    return AvWindDirN;
-  }
-  else{
-    AvWindDirN = totalDir/counterAvWindDir; 
-    counterAvWindDir = 0;
-    return AvWindDirN;
-  }
+volatile unsigned long pulseCount = 0;
 
+void IRAM_ATTR hallISR() {
+    pulseCount++;
 }
 
+float getRPM(unsigned int pulsesPerRevolution) {
+    static unsigned long lastTime = 0;
+    unsigned long currentTime = millis();
+    unsigned long dt = currentTime - lastTime;
 
+    noInterrupts();
+    unsigned long pulses = pulseCount;
+    pulseCount = 0;
+    interrupts();
 
-float calculateRPM(float currentAngle) { //not tested
+    lastTime = currentTime;
 
-  unsigned long lastTime = 0; //global varibles for rpm calculation
-  float lastAngle = 0;
-  
-  unsigned long currentTime = millis();
-
-  float timeDiff = (currentTime - lastTime) / 1000.0; // Time difference in seconds
-  float angleDiff = currentAngle - lastAngle;
-
-  if (angleDiff < 0) {
-    angleDiff += 360.0; 
-  }
-
-  float rpm = (angleDiff / 360.0) / timeDiff * 60.0; // Convert to RPM
-  lastAngle = currentAngle;
-  lastTime = currentTime;
-  return rpm;
+    float rpm = (float)pulses / pulsesPerRevolution * (60000.0 / dt);
+    return rpm;
 }
-
-*/
 
 void mqttTask(void * pvArguments) {
-	TickType_t lastWakeTime = xTaskGetTickCount();
-	while (true) {
-		StaticJsonDocument<STM_JSON_DOCUMENT_MEDIUM_SIZE> doc;
+    TickType_t lastWakeTime = xTaskGetTickCount();
+    while (true) {
+        StaticJsonDocument<STM_JSON_DOCUMENT_MEDIUM_SIZE> doc;
+        JsonObject wind = doc.createNestedObject("wind");
 
-		JsonObject wind = doc.createNestedObject("wind");
-    wind["Direction"]= windDir();
-		
+        int angle = windDir();
+        float rpm = getRPM(PULSES_PER_REV);
 
-		stm.publish("sensor/wind", doc.as<JsonObjectConst>());
+        wind["Direction"] = angle;
+        wind["RPM"] = rpm;
 
-		vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(MQTT_TASK_INTERVAL_MS));
-	}
+        stm.publish("sensor/wind", doc.as<JsonObjectConst>());
+        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(MQTT_TASK_INTERVAL_MS));
+    }
 }
 
 void setup() {
-  Wire.begin();  // Initialize I2C communication
-  Serial.begin(115200); // Initialize serial communication
-  while (!Serial);
-  Serial.println("AS5600 Magnetic Encoder Test");
+    Wire.begin();
+    Serial.begin(115200);
+    while (!Serial);
 
-  stm.begin("wind", IPAddress(192, 168, 42, 104), new ModuleCallbacks());
-  xTaskCreate(mqttTask, "mqttTask", STM_TASK_MEDIUM_STACK_SIZE, NULL, STM_TASK_MEDIUM_PRIORITY, NULL);
+    pinMode(HALL_PIN, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(HALL_PIN), hallISR, RISING);
 
+    stm.begin("wind", IPAddress(192, 168, 42, 104), new ModuleCallbacks());
+    xTaskCreate(mqttTask, "mqttTask", STM_TASK_MEDIUM_STACK_SIZE, NULL, STM_TASK_MEDIUM_PRIORITY, NULL);
 }
 
 void loop() {
-  TickType_t lastWakeTime = xTaskGetTickCount();
+    TickType_t lastWakeTime = xTaskGetTickCount();
 
-  uint16_t rawAngle = readRawAngle();
+    int angle = windDir();
+    float rpm = getRPM(PULSES_PER_REV);
 
-  Serial.print("Raw Angle: ");
-  Serial.println(rawAngle);
-  Serial.print("Angle: ");
-  Serial.println(windDir());
-  Serial.println("________");
+    Serial.print("Wind Angle: "); Serial.println(angle);
+    Serial.print("RPM: "); Serial.println(rpm);
+    Serial.println("________");
 
-
-	vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(LOOP_TASK_INTERVAL_MS));
-
-  delay(100); // Wait for 100ms
+    vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(LOOP_TASK_INTERVAL_MS));
+    delay(100);
 }
