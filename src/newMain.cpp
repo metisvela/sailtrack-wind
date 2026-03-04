@@ -2,6 +2,8 @@
 #include <Wire.h>
 #include <SailtrackModule.h>
 
+//#define Wired_Com
+
 #define MQTT_PUBLISH_FREQ_HZ    5
 #define AHRS_UPDATE_FREQ_HZ     5
 
@@ -104,21 +106,29 @@ void setup() {
 
     pinMode(HALL_PIN, INPUT_PULLUP);
     attachInterrupt(digitalPinToInterrupt(HALL_PIN), hallISR, RISING);
-
-    stm.begin("wind", IPAddress(192, 168, 42, 104), new ModuleCallbacks());
-    xTaskCreate(mqttTask, "mqttTask", STM_TASK_MEDIUM_STACK_SIZE, NULL, STM_TASK_MEDIUM_PRIORITY, NULL);
+    #ifndef Wired_Com
+        stm.begin("wind", IPAddress(192, 168, 42, 104), new ModuleCallbacks());
+        xTaskCreate(mqttTask, "mqttTask", STM_TASK_MEDIUM_STACK_SIZE, NULL, STM_TASK_MEDIUM_PRIORITY, NULL);
+    #endif
 }
 
 void loop() {
-    TickType_t lastWakeTime = xTaskGetTickCount();
 
-    int angle = windDir();
+
+    uint16_t angle = windDir();
     float rpm = getRPM(PULSES_PER_REV);
 
-    Serial.print("Wind Angle: "); Serial.println(angle);
-    Serial.print("RPM: "); Serial.println(rpm);
-    Serial.println("________");
+    #ifdef Wired_Com
+        Serial.print("Wind Angle: "); Serial.println(angle);
+        Serial.print("RPM: "); Serial.println(rpm);
+        Serial.println("________");
+    #endif
 
-    vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(LOOP_TASK_INTERVAL_MS));
+    #ifndef Wired_Com
+        TickType_t lastWakeTime = xTaskGetTickCount();
+        vTaskDelayUntil(&lastWakeTime, pdMS_TO_TICKS(LOOP_TASK_INTERVAL_MS));
+    #endif
+
+
     delay(100);
 }
